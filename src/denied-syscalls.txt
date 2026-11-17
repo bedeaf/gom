@@ -1,0 +1,65 @@
+# Syscalls that return EPERM inside the cage (kernel attack surface / escape routes).
+# Numbers are generated from kernel headers at build time; names missing from a header are skipped.
+
+# Process inspection / foreign memory access
+ptrace
+process_vm_readv
+process_vm_writev
+pidfd_getfd
+kcmp
+
+# Namespaces and mounts (escape attempts)
+unshare
+setns
+mount
+umount2
+umount
+pivot_root
+chroot
+move_mount
+open_tree
+open_tree_attr
+fsopen
+fsmount
+fsconfig
+fspick
+mount_setattr
+
+# Subsystems with a long history of kernel privilege-escalation bugs
+bpf
+perf_event_open
+userfaultfd
+io_uring_setup
+io_uring_enter
+io_uring_register
+keyctl
+add_key
+request_key
+
+# Kernel modules / reboot / system-wide settings
+init_module
+finit_module
+delete_module
+create_module
+kexec_load
+kexec_file_load
+reboot
+swapon
+swapoff
+acct
+syslog
+quotactl
+quotactl_fd
+nfsservctl
+lookup_dcookie
+vhangup
+iopl
+ioperm
+uselib
+open_by_handle_at
+name_to_handle_at
+settimeofday
+clock_settime
+clock_adjtime
+adjtimex
+fanotify_init
