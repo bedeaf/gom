@@ -241,6 +241,9 @@ start_display() {
     local gr=${GAME_RES:-$res_out}; gw=${gr%x*}; gh=${gr#*x}
     install -d -m 0700 "$RUN/x11"
     cage_base c; fs=(); sys_fs fs
+    # gamescope schedules its own compositor/frame-timing thread and warns without this;
+    # scoped to the display cage only, the game and audio cages stay fully capless.
+    c+=(--cap-add CAP_SYS_NICE)
     c+=("${fs[@]}" --ro-bind /sys /sys --dev-bind /dev/dri /dev/dri
         --bind "$RUN/x11" /tmp/.X11-unix
         --ro-bind "/tmp/.X11-unix/X$hostnum" "/tmp/.X11-unix/X$hostnum"
