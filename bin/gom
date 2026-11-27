@@ -21,11 +21,13 @@ GAME_MNT=/game
 LOCK_MNT=/opt/gom/lock
 
 NAME='' AUDIO=1 WINDOWED=0 GAME_RES='' GRAB=0 DIRECT_X=0 SHELL_MODE=0 VERBOSE=0 DRYRUN=0
-BACKEND=sdl SELFTEST=0 RESET='' LIST=0
+BACKEND=sdl SELFTEST=0 RESET='' LIST=0 LAUNCHERS=''
 RUN='' DISPLAY_PID='' AUDIO_PID='' PACAT_PID='' GAME_PID='' XNUM='' SHELL_RC=0
-declare -a GAME_ARGS=()
+HOME_GAME='' PROFILE_LOCK='' HOME_BEFORE='' KEEP_COMPOSITOR=${GOM_KEEP_COMPOSITOR:-0} COMP_DIR='' COMP_HOLD=''
+declare -a GAME_ARGS=() GAME_ENV=()
 
 die()  { printf 'gom: error: %s\n' "$*" >&2; exit 1; }
+die_code() { local c=$1; shift; printf 'gom: error: %s\n' "$*" >&2; exit "$c"; }
 warn() { printf 'gom: warning: %s\n' "$*" >&2; }
 info() { printf 'gom: %s\n' "$*" >&2; }
 
@@ -42,12 +44,17 @@ options:
   -w, --windowed       windowed instead of fullscreen
   -r, --res WxH        game resolution (default: your screen resolution)
   -g, --grab           always use relative mouse mode (FPS games)
+  -e, --env NAME=VALUE set an environment variable for the game (repeatable)
       --shell          open a shell inside the game cage instead of the game (debugging)
+      --keep-compositor  leave picom (or another X compositor) running during the game;
+                       by default it is paused, because compositing the game window tears
       --direct-x       UNSAFE: skip gamescope, give the game your real X server
                        (it could then log keystrokes and read other windows)
   -v, --verbose        show game output live (always saved to the profile's last.log)
       --dry-run        print the cage command lines and exit
       --list           list profiles
+      --launchers DIR  list the launchers gom sees in DIR, best first, and exit
+                       (exit 0: gom picks the first, 3: you must choose, 4: none)
       --reset NAME     delete a profile (saves, settings, overlay changes)
       --selftest       run the attack simulation and verify every barrier
   -h, --help           this help
@@ -55,6 +62,9 @@ options:
 Profiles live in ${XDG_DATA_HOME:-~/.local/share}/gom/NAME/
   home/   the game's private $HOME (saves and settings usually land here)
   layer/  files the game wrote into its own directory (the original is never touched)
+  game.path  the launcher this profile last ran
+
+Exit status: 3 = several launchers and none stands out, 4 = no launcher found.
 
 Gamescope keys: Super+F fullscreen, Super+G keyboard grab.
 EOF
@@ -69,12 +79,17 @@ parse_args() {
             -m|--mute) AUDIO=0 ;;
             -w|--windowed) WINDOWED=1 ;;
             -r|--res) GAME_RES=${2:?--res needs WxH}; shift ;;
+            -e|--env)
+                [[ ${2-} =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] || die "--env needs NAME=VALUE"
+                GAME_ENV+=("$2"); shift ;;
             -g|--grab) GRAB=1 ;;
             --shell) SHELL_MODE=1 ;;
             --direct-x) DIRECT_X=1 ;;
+            --keep-compositor) KEEP_COMPOSITOR=1 ;;
             -v|--verbose) VERBOSE=1 ;;
             --dry-run) DRYRUN=1 ;;
             --list) LIST=1 ;;
+            --launchers) LAUNCHERS=${2:?--launchers needs a directory}; shift ;;
             --reset) RESET=${2:?--reset needs a profile name}; shift ;;
             --selftest) SELFTEST=1 ;;
             -h|--help) usage; exit 0 ;;
@@ -139,18 +154,91 @@ screen_res() {
 
 is_elf() { [[ -f $1 ]] && [[ $(head -c 4 -- "$1" | od -An -tx1 | tr -d ' \n') == 7f454c46 ]]; }
 
-detect_launcher() {
-    local dir=$1 f
-    local -a cands=()
-    [[ -f $dir/start.sh ]] && { printf 'start.sh'; return; }           # GOG convention
-    for f in "$dir"/*.sh; do [[ -f $f ]] && cands+=("${f##*/}"); done
-    (( ${#cands[@]} == 1 )) && { printf '%s' "${cands[0]}"; return; }
-    if (( ${#cands[@]} == 0 )); then
-        for f in "$dir"/*; do is_elf "$f" && [[ -x $f ]] && cands+=("${f##*/}"); done
-        (( ${#cands[@]} == 1 )) && { printf '%s' "${cands[0]}"; return; }
+is_script() { [[ -f $1 ]] && [[ $(head -c 2 -- "$1") == '#!' ]]; }
+
+# Launcher candidates in DIR as "SCORE<TAB>NAME" lines, best first. Name matching the game
+# folder scores 2, a 64-bit build 1, a 32-bit one -1, setup/server/editor tools -2.
+# Libraries and crash reporters never count.
+launcher_candidates() {
+    local dir=$1 f n key base score
+    local -a c=()
+    [[ -f $dir/start.sh ]] && { printf '9\tstart.sh\n'; return; }      # GOG convention
+    is_script "$dir/start" && { printf '9\tstart\n'; return; }         # YSI / repack convention
+    for f in "$dir"/*.sh; do [[ -f $f ]] && c+=("${f##*/}"); done
+    if (( ${#c[@]} == 0 )); then
+        for f in "$dir"/*; do
+            n=${f##*/}
+            case ${n,,} in *.so|*.so.*|*crashhandler*|crashpad_handler*|*crashreport*) continue ;; esac
+            is_elf "$f" && [[ -x $f ]] && c+=("$n")
+        done
     fi
-    if (( ${#cands[@]} == 0 )); then die "no launcher found in $dir; pass the binary or script explicitly"; fi
-    die "several launchers in $dir: ${cands[*]}; pass one explicitly, e.g. gom '$dir/${cands[0]}'"
+    local -a ok=()
+    for n in "${c[@]}"; do
+        [[ $n == *[$'\t\n']* ]] && continue                                # keeps the output parseable
+        [[ ${n,,} =~ (^|[^a-z])uninstall ]] && continue                     # never "the game"
+        ok+=("$n")
+    done
+    c=("${ok[@]}")
+    base=${dir##*/}
+    case ${base,,} in game|games|bin|data|linux|linux64|x86_64|x64|files|app) base=$(basename -- "$(dirname -- "$dir")") ;; esac
+    key=$(printf '%s' "${base,,}" | tr -cd 'a-z0-9')
+    for n in "${c[@]}"; do
+        score=0
+        f=$(printf '%s' "${n,,}" | sed -E 's/\.(sh|x86_64|x86|bin|run)$//; s/[._-]?(x86_64|x64|64|x86|32)$//' | tr -cd 'a-z0-9')
+        [[ -n $key && $f == "$key" ]] && score=$(( score + 2 ))
+        case ${n,,} in *x86_64*|*64*) score=$(( score + 1 )) ;; *.x86|*x86|*32*) score=$(( score - 1 )) ;; esac
+        [[ ${n,,} =~ (^|[^a-z])(setup|install|uninstall|config|configure|settings|update|updater|server|dedicated|editor|benchmark)([^a-z]|$) ]] &&
+            score=$(( score - 2 ))
+        printf '%d\t%s\n' "$score" "$n"
+    done | sort -t $'\t' -k1,1nr -s
+}
+
+# Picks the launcher, or fails with 3 (several equally good) or 4 (none).
+detect_launcher() {
+    local dir=$1 s n
+    local -a names=() scores=()
+    while IFS=$'\t' read -r s n; do scores+=("$s"); names+=("$n"); done < <(launcher_candidates "$dir")
+    (( ${#names[@]} )) || die_code 4 "no launcher found in $dir; pass the binary or script explicitly"
+    if (( ${#names[@]} == 1 || scores[0] > scores[1] )); then
+        (( ${#names[@]} == 1 )) || info "several launchers in $dir, using ${names[0]} (others: ${names[*]:1})"
+        printf '%s' "${names[0]}"; return
+    fi
+    die_code 3 "several launchers in $dir: ${names[*]}; pass one explicitly, e.g. gom '$dir/${names[0]}'"
+}
+
+# --launchers DIR: candidates one per line, best first. Exit 0 = gom picks the first one
+# by itself, 3 = the caller has to choose, 4 = nothing runnable in DIR.
+list_launchers() {
+    local dir s n
+    dir=$(readlink -f -- "$LAUNCHERS") || die "not found: $LAUNCHERS"
+    [[ -d $dir ]] || die "not a directory: $LAUNCHERS"
+    local -a names=() scores=()
+    while IFS=$'\t' read -r s n; do scores+=("$s"); names+=("$n"); done < <(launcher_candidates "$dir")
+    (( ${#names[@]} )) || exit 4
+    printf '%s\n' "${names[@]}"
+    (( ${#names[@]} == 1 || scores[0] > scores[1] )) || exit 3
+}
+
+# launcher_cmd ARRAY HOSTPATH CAGEPATH: the command line that starts the launcher in the cage.
+launcher_cmd() {
+    local -n _l=$1; local host=$2 cage=$3 line=''
+    if [[ -x $host ]]; then _l=("$cage"); return; fi
+    if is_elf "$host"; then
+        # Lost its exec bit (zip, torrent). chmod inside the cage: only the copy changes.
+        # shellcheck disable=SC2016  # expanded by the cage's sh
+        _l=(/bin/sh -c 'chmod u+x -- "$0" && exec "$0" "$@"' "$cage"); return
+    fi
+    IFS= read -r line <"$host" || true
+    if [[ $line == '#!'* ]]; then
+        local -a sb; read -r -a sb <<<"${line#\#!}"
+        case ${sb[0]##*/} in
+            sh|bash|dash) _l=(/bin/bash "$cage"); return ;;
+            env) case ${sb[1]-} in sh|bash|dash|'') _l=(/bin/bash "$cage"); return ;; esac ;;
+        esac
+        (( ${#sb[@]} )) && { _l=("${sb[@]}" "$cage"); return; }
+    fi
+    [[ $host == *.sh ]] && { _l=(/bin/bash "$cage"); return; }
+    die "$LAUNCHER is neither executable nor a script"
 }
 
 guard_dir() {
@@ -158,6 +246,7 @@ guard_dir() {
     [[ $d != *$'\n'* ]] || die "path contains a newline"
     [[ $d != / ]] || die "refusing to expose /"
     [[ "$h/" != "$d/"* ]] || die "refusing to expose $d: it contains your home directory"
+    if [[ -n $HOME_GAME ]]; then return; fi    # already inside that profile's private home
     case $d in
         "$h"/.ssh*|"$h"/.gnupg*|"$h"/.config|"$h"/.local|"$h"/.local/share|"$DATA"*)
             die "refusing to expose $d" ;;
@@ -175,6 +264,15 @@ resolve_game() {
     [[ -e $t ]] || die "not found: $1"
     if [[ -d $t ]]; then GAME_DIR=$t; LAUNCHER=$(detect_launcher "$t")
     else GAME_DIR=$(dirname -- "$t"); LAUNCHER=${t##*/}
+    fi
+    # A game that an installer put into a profile's private home runs from there, in that
+    # profile, without an overlay: gom ~/.local/share/gom/NAME/home/GAMEDIR
+    local data; data=$(readlink -f -- "$DATA" 2>/dev/null || printf '%s' "$DATA")
+    if [[ $GAME_DIR == "$data"/*/home/?* ]]; then
+        local rest=${GAME_DIR#"$data"/} owner
+        owner=${rest%%/*}; HOME_GAME=${rest#*/home/}
+        [[ -z $NAME || $NAME == "$owner" ]] || die "$GAME_DIR belongs to profile '$owner', not '$NAME'"
+        NAME=$owner
     fi
     guard_dir "$GAME_DIR"
     if [[ -z $NAME ]]; then
@@ -213,11 +311,23 @@ cage_base() {
     _b=(bwrap --die-with-parent --new-session --unshare-all --unshare-user --disable-userns --cap-drop ALL --hostname gom)
 }
 
-launch() {  # launch LOGFILE CMD... ; runs a cage in the background with the synthetic /etc files
+# spawn CMD... : run a cage in the foreground with the synthetic /etc files on fds 3-5.
+# bwrap passes every other open fd through, so the profile lock fd is closed explicitly:
+# otherwise the game would hold a writable handle to a host file.
+spawn() {
+    if [[ -n $PROFILE_LOCK ]]; then
+        "$@" 3<<<"player:x:$MY_UID:$MY_GID:player:$GUEST_HOME:/bin/sh" \
+             4<<<"player:x:$MY_GID:" 5<<<"$MACHINE_ID" {PROFILE_LOCK}>&-
+    else
+        "$@" 3<<<"player:x:$MY_UID:$MY_GID:player:$GUEST_HOME:/bin/sh" \
+             4<<<"player:x:$MY_GID:" 5<<<"$MACHINE_ID"
+    fi
+}
+
+launch() {  # launch LOGFILE CMD... ; runs a cage in the background
     local log=$1; shift
     if (( DRYRUN )); then printf '%q ' "$@"; printf '\n\n'; return; fi
-    "$@" 3<<<"player:x:$MY_UID:$MY_GID:player:$GUEST_HOME:/bin/sh" \
-         4<<<"player:x:$MY_GID:" 5<<<"$MACHINE_ID" >"$log" 2>&1 &
+    spawn "$@" >"$log" 2>&1 &
 }
 
 # X cookies are bound to the hostname, which differs inside the cage. Write a copy of the
@@ -314,7 +424,7 @@ os.dup2(fd, 0); os.close(fd)
 os.execvp("pacat", ["pacat", "--playback", "--raw", "--format=s16le", "--rate=48000",
                     "--channels=2", "--latency-msec=" + sys.argv[2],
                     "--client-name=gom", "--stream-name=" + sys.argv[3]])
-' "$RUN/audio/out" "${GOM_AUDIO_LATENCY_MS:-30}" "$NAME" >>"$PROFILE/audio.log" 2>&1 &
+' "$RUN/audio/out" "${GOM_AUDIO_LATENCY_MS:-30}" "$NAME" >>"$PROFILE/audio.log" 2>&1 {PROFILE_LOCK}>&- &
     PACAT_PID=$!
 }
 
@@ -328,8 +438,12 @@ start_game() {
         --ro-bind-try /sys/class/drm /sys/class/drm)
     local node
     for node in /dev/dri/renderD*; do c+=(--dev-bind "$node" "$node"); done
-    c+=(--overlay-src "$GAME_DIR" --overlay "$PROFILE/layer/upper" "$PROFILE/layer/work" "$GAME_MNT"
-        --bind "$PROFILE/home" "$GUEST_HOME"
+    # Where the game lives inside the cage: /game (overlay) or a folder of the private home.
+    local gdir=$GAME_MNT
+    if [[ -n $HOME_GAME ]]; then gdir=$GUEST_HOME/$HOME_GAME
+    else c+=(--overlay-src "$GAME_DIR" --overlay "$PROFILE/layer/upper" "$PROFILE/layer/work" "$GAME_MNT")
+    fi
+    c+=(--bind "$PROFILE/home" "$GUEST_HOME"
         --perms 0700 --dir "/run/user/$MY_UID")
     if (( DIRECT_X )); then
         local hostnum; hostnum=$(host_display_number)
@@ -341,7 +455,7 @@ start_game() {
     fi
     if (( AUDIO )); then c+=(--ro-bind "$RUN/audio/native" "/run/user/$MY_UID/pulse/native"); fi
     local sub; sub=$(dirname -- "$LAUNCHER")
-    c+=(--chdir "$GAME_MNT/${sub#.}"
+    c+=(--chdir "$gdir/${sub#.}"
         --clearenv
         --setenv HOME "$GUEST_HOME" --setenv USER player --setenv LOGNAME player
         --setenv PATH /usr/local/bin:/usr/bin:/bin --setenv SHELL /bin/sh
@@ -350,27 +464,33 @@ start_game() {
         --setenv SDL_VIDEODRIVER x11 --setenv GOM 1)
     (( DIRECT_X )) && c+=(--setenv XAUTHORITY /run/xauth)
     (( AUDIO )) && c+=(--setenv PULSE_SERVER "unix:/run/user/$MY_UID/pulse/native")
+    # --env comes last so it can override the defaults above. It only reaches the game cage,
+    # which cannot see the host X server or sound server whatever DISPLAY or PULSE_SERVER say.
+    local kv
+    for kv in "${GAME_ENV[@]}"; do c+=(--setenv "${kv%%=*}" "${kv#*=}"); done
     (( SELFTEST )) && c+=(--setenv GOM_HOST_HOME "$HOME" --setenv GOM_HOST_RUNTIME "$XDG_RUNTIME_DIR"
                           --setenv GOM_HOST_USER "$(id -un)"
                           --setenv GOM_HOST_DISPLAY "${DISPLAY-}")
-    c+=(-- "$LOCK_MNT" --nproc "${GOM_NPROC:-4096}" --write "$GUEST_HOME" --write /tmp --write /var/tmp --write "$GAME_MNT"
-           --write /run/user --write /dev --dev /dev --write /proc --exec /usr --exec "$GAME_MNT" --)
+    # Execute rights cover every place the game can write to. Splitting "writable" from
+    # "executable" would buy nothing here: the game folder must be both, and memfd / ld.so
+    # run dropped code anyway (see tests/attack.c). Self-extracting installers (makeself,
+    # MojoSetup, YAD) unpack helper binaries into /tmp and need this.
+    c+=(-- "$LOCK_MNT" --nproc "${GOM_NPROC:-4096}"
+           --write "$GUEST_HOME" --write /tmp --write /var/tmp --write "$GAME_MNT"
+           --write /run/user --write /dev --dev /dev --write /proc
+           --exec /usr --exec "$GAME_MNT" --exec "$GUEST_HOME" --exec /tmp --exec /var/tmp --)
     if (( SHELL_MODE )); then cmd=(/bin/bash -i)
-    elif [[ -x $GAME_DIR/$LAUNCHER ]]; then cmd=("$GAME_MNT/$LAUNCHER")
-    elif [[ $LAUNCHER == *.sh ]]; then cmd=(/bin/bash "$GAME_MNT/$LAUNCHER")
-    else die "$LAUNCHER is not executable"
+    else launcher_cmd cmd "$GAME_DIR/$LAUNCHER" "$gdir/$LAUNCHER"
     fi
     c+=("${cmd[@]}" "${GAME_ARGS[@]}")
 
     if (( DRYRUN )); then launch /dev/null "${c[@]}"; return; fi
     if (( SHELL_MODE )); then   # foreground: background jobs get /dev/null as stdin
         SHELL_RC=0
-        "${c[@]}" 3<<<"player:x:$MY_UID:$MY_GID:player:$GUEST_HOME:/bin/sh" \
-                  4<<<"player:x:$MY_GID:" 5<<<"$MACHINE_ID" || SHELL_RC=$?
+        spawn "${c[@]}" || SHELL_RC=$?
         return
     elif (( VERBOSE )); then
-        "${c[@]}" 3<<<"player:x:$MY_UID:$MY_GID:player:$GUEST_HOME:/bin/sh" \
-                  4<<<"player:x:$MY_GID:" 5<<<"$MACHINE_ID" > >(tee "$PROFILE/last.log") 2>&1 &
+        { spawn "${c[@]}" 2>&1 | tee "$PROFILE/last.log"; } &
     else
         launch "$PROFILE/last.log" "${c[@]}"
     fi
@@ -378,6 +498,70 @@ start_game() {
 }
 
 # ------------------------------------------------------------------ lifecycle
+
+# ------------------------------------------------------------------ the host compositor
+
+# Compositing gamescope's window tears on X with the modesetting driver, which has no TearFree:
+# measured 2026-11-27 with picom v13 (glx, vsync), including picom's own per-window unredirect.
+# Only no compositor at all was clean. So while a game runs the compositor of this display is
+# stopped, and it is started again, with its exact command line, when the last game ends.
+COMPOSITORS=(picom compton xcompmgr compfy fastcompmgr)
+
+pause_compositor() {
+    (( KEEP_COMPOSITOR || DRYRUN || SELFTEST )) && return 0
+    COMP_DIR=${XDG_RUNTIME_DIR:-/tmp}/gom-compositor
+    install -d -m 0700 "$COMP_DIR"
+    local l n pid i key stopped=()
+    exec {l}>"$COMP_DIR/.lock"
+    flock "$l"
+    COMP_HOLD=$COMP_DIR/hold.$$
+    : > "$COMP_HOLD"
+    for n in "${COMPOSITORS[@]}"; do
+        for pid in $(pgrep -u "$MY_UID" -x "$n"); do
+            # only the compositor of the display the game appears on
+            [[ $(tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | grep -m1 '^DISPLAY=') == "DISPLAY=${DISPLAY-}" ]] || continue
+            key=$(tr '\0' '\n' < "/proc/$pid/cmdline" 2>/dev/null | tee "$COMP_DIR/new" | md5sum | cut -c1-16)
+            [[ -s $COMP_DIR/new ]] && mv -f -- "$COMP_DIR/new" "$COMP_DIR/cmd.$key"   # one per command line
+            kill "$pid" 2>/dev/null && stopped+=("$pid")
+        done
+    done
+    rm -f -- "$COMP_DIR/new"
+    for (( i = 0; i < 30; i++ )); do
+        kill -0 "${stopped[@]}" 2>/dev/null || break
+        sleep 0.1
+    done
+    (( ${#stopped[@]} )) && info "compositor paused while the game runs (it tears the game window); it comes back afterwards"
+    exec {l}>&-
+    return 0
+}
+
+resume_compositor() {
+    [[ -n $COMP_HOLD ]] || return 0
+    local l h f others=0
+    local -a argv
+    exec {l}>"$COMP_DIR/.lock"
+    flock "$l"
+    rm -f -- "$COMP_HOLD"
+    COMP_HOLD=''
+    for h in "$COMP_DIR"/hold.*; do
+        if kill -0 "${h##*.}" 2>/dev/null; then others=1; else rm -f -- "$h"; fi
+    done
+    if (( ! others )); then          # the last game ended (or an earlier gom died): bring it back
+        for f in "$COMP_DIR"/cmd.*; do
+            mapfile -t argv < "$f"
+            rm -f -- "$f"
+            (( ${#argv[@]} )) || continue
+            pgrep -u "$MY_UID" -x "${argv[0]##*/}" >/dev/null && continue
+            if [[ -n $PROFILE_LOCK ]]; then
+                setsid -f "${argv[@]}" </dev/null >/dev/null 2>&1 {l}>&- {PROFILE_LOCK}>&-
+            else
+                setsid -f "${argv[@]}" </dev/null >/dev/null 2>&1 {l}>&-
+            fi
+        done
+    fi
+    exec {l}>&-
+    return 0
+}
 
 cleanup() {
     local p
@@ -388,6 +572,7 @@ cleanup() {
         [[ -n $p ]] && wait "$p" 2>/dev/null || true
     done
     if [[ -n $RUN && -d $RUN ]]; then rm -rf -- "$RUN"; fi
+    resume_compositor
     return 0
 }
 
@@ -400,11 +585,26 @@ prepare_profile() {
     flock -n "$PROFILE_LOCK" || die "profile '$NAME' is already running"
     RUN=$(mktemp -d -- "$XDG_RUNTIME_DIR/gom.$NAME.XXXXXX")
     chmod 0700 -- "$RUN"
+    HOME_BEFORE=$(cd "$PROFILE/home" && printf '%s\n' *)
+}
+
+# After an installer ran: point at the game folders it created in the private home.
+report_installed() {
+    local d n
+    for d in "$PROFILE/home"/*/; do
+        d=${d%/}; n=${d##*/}
+        grep -qxF -- "$n" <<<"$HOME_BEFORE" && continue
+        [[ -n $(launcher_candidates "$d") ]] || continue
+        info "new game folder in the private home: $d"
+        info "start it with: gom $(printf '%q' "$d")"
+    done
+    return 0
 }
 
 run_game() {
     trap cleanup EXIT
     trap 'exit 130' INT TERM HUP
+    pause_compositor
     if (( DIRECT_X )); then warn "--direct-x: the game can see your whole X session (keystrokes, other windows)"
     else start_display
     fi
@@ -414,6 +614,7 @@ run_game() {
     (( SHELL_MODE )) && return "$SHELL_RC"
     info "running '$LAUNCHER' as profile '$NAME' (log: $PROFILE/last.log)"
     local rc=0
+    trap 'cleanup; report_installed' EXIT
     if [[ -n $DISPLAY_PID ]]; then wait -n "$GAME_PID" "$DISPLAY_PID" || rc=$?
     else wait "$GAME_PID" || rc=$?
     fi
@@ -496,6 +697,7 @@ selftest() {
 main() {
     parse_args "$@"
     if (( LIST )); then list_profiles; exit 0; fi
+    if [[ -n $LAUNCHERS ]]; then list_launchers; exit 0; fi
     if [[ -n $RESET ]]; then reset_profile; exit 0; fi
     check_host
     ensure_built
@@ -503,6 +705,9 @@ main() {
     [[ -n ${TARGET-} ]] || { usage >&2; exit 2; }
     resolve_game "$TARGET"
     prepare_profile
+    if (( ! DRYRUN )); then   # what this profile runs, for front-ends like shelf
+        printf '%s\n' "$GAME_DIR/$LAUNCHER" > "$PROFILE/game.path.tmp" && mv -f -- "$PROFILE/game.path.tmp" "$PROFILE/game.path"
+    fi
     run_game
 }
 

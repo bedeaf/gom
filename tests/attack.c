@@ -275,7 +275,23 @@ static void persistence(void) {
     pid_t pid = fork();
     if (pid == 0) { char *av[] = { "/tmp/stage2", NULL }; execv(av[0], av); _exit(errno == EACCES ? 77 : 78); }
     int ws = 0; waitpid(pid, &ws, 0);
-    verdict(WIFEXITED(ws) && WEXITSTATUS(ws) == 77, "execute a dropped second-stage binary from /tmp", EACCES);
+    /* Not a barrier: installers need it, and the game folder is writable + executable anyway. */
+    info("dropped binary in /tmp runs (still inside the cage, no new rights): %s",
+         WIFEXITED(ws) && WEXITSTATUS(ws) == 0 ? "yes" : "no");
+
+    /* Host file handles inherited through bwrap (e.g. gom's profile lock) must not reach the game. */
+    int leaked = 0; DIR *fds = opendir("/proc/self/fd"); struct dirent *fe;
+    while (fds && (fe = readdir(fds))) {
+        int n = atoi(fe->d_name);
+        if (fe->d_name[0] < '0' || fe->d_name[0] > '9' || n <= 2 || n == dirfd(fds)) continue;
+        char lp[64], tgt[512] = {0};
+        snprintf(lp, sizeof lp, "/proc/self/fd/%d", n);
+        if (readlink(lp, tgt, sizeof tgt - 1) < 0) continue;
+        printf("info     inherited fd %d -> %s\n", n, tgt);
+        leaked++;
+    }
+    if (fds) closedir(fds);
+    verdict(leaked == 0, "use file handles leaked from the host", 0);
 }
 
 /* ------------------------------------------------------------- 7. visibility */
