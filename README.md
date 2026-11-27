@@ -33,12 +33,84 @@ More options:
 gom -w -r 1280x720 GAME     # windowed, 720p
 gom -g GAME                 # always lock the mouse (good for shooters)
 gom -m GAME                 # no sound
+gom -e SDL_AUDIODRIVER=pulse GAME   # set an environment variable for the game (repeatable)
 gom --shell GAME            # open a shell in the same sandbox the game gets
+gom --keep-compositor GAME  # leave picom running (by default it is paused during the game)
 gom --list                  # show profiles (saves and settings)
+gom --launchers DIR         # what gom would start in DIR (exit 3: you must pick, 4: nothing)
 gom --reset NAME            # delete a profile
 ```
 
 In the game window, `Super+F` toggles fullscreen and `Super+G` toggles the keyboard grab.
+
+### Installers
+
+Self-extracting installers (GOG/MojoSetup `.sh`, makeself, YAD installers from repacks) run
+inside the sandbox like a game. They install into the profile's private home, which they see as
+`/home/player`. When the installer closes, gom prints where the game landed and how to start it:
+
+```sh
+gom ~/Games/Foo/foo-installer.sh                # install; pick /home/player as the target
+gom ~/.local/share/gom/Foo/home/Foo             # play: runs in the same profile, no overlay
+```
+
+Nothing from the installer ever touches your real home.
+
+### shelf: a game library
+
+I'm lazy and I didn't want to use my tool gom in a terminal just to play games, lol. So I made this.
+
+![shelf: the library](art/shelf-library.png)
+
+![shelf: the archive view (game names and covers blurred)](art/shelf-archive.png)
+
+`bin/shelf` is a small GTK window for your games. It keeps them with their cover art, starts
+them through gom (so every launch still goes into the sandbox) and counts how long you play.
+
+```sh
+ln -s "$PWD/bin/shelf" ~/.local/bin/shelf
+shelf                                           # the window
+shelf --run "$(shelf --list | dmenu -i -p play)"   # or from dmenu; play time is counted too
+```
+
+- **Import:** point it at a folder such as `~/Games` and every subfolder gom can start becomes a
+  game. An installed game wins over the installer lying next to it. Loose installers are left
+  out, because a game sees every file next to it: give each one its own folder.
+- **Archive:** the *Archive* view lists the games of the archive.org collection this project was
+  made for. Pictures come straight from archive.org into memory and are never written to disk.
+  *Install* downloads the game (checked against archive.org's md5, resumed after a dropped
+  connection) and unpacks it into `~/Games/<title>` without running anything from it: GOG
+  installers are unzipped, LinuxRuleZ! installers have their embedded `tar.zst` read out, and
+  `.tar`, `.zip` and `.7z` archives are unpacked with checks against paths and links that point
+  outside. An installer shelf can't read is kept as is and runs in the sandbox on the first
+  start. Removing such a game from the shelf can delete its folder too.
+- **Covers:** looked up once per game on the Steam store, then Wikipedia. Only the title is
+  sent. *Choose a cover* shows every hit to pick from; you can also drop an image (or a picture
+  dragged out of the browser) on a game. Downloads must be JPEG, PNG or WebP, are checked for
+  size before they are decoded, and are re-encoded before they are kept. Turn lookups off in the
+  menu or with `SHELF_OFFLINE=1`.
+- **Several programs in one folder:** shelf asks once which one starts the game. The others
+  (DUSK and DUSKWORLD, for example) are under *Start another program* in the game's menu.
+- **Installers:** after an installer ran in a profile, shelf offers to start the installed game
+  from then on.
+- **Play time, favorites, hidden games, tags and notes**, tabs for recent and unplayed games,
+  sorting by name, last played, play time or date added, a details panel, logs, a shell in the
+  game's sandbox, and per-game options (windowed, resolution, mouse lock, sound, arguments,
+  environment, gamescope flags). Press F1 in the window for the keyboard shortcuts.
+- **Missing libraries:** before a game's first start shelf reads its programs' ELF headers (it
+  runs nothing) and names the libraries your system lacks, with the install command for your
+  distribution (Void, Debian/Ubuntu, Arch, Fedora, openSUSE, Gentoo), 32-bit packages included.
+- **Logs** last until shelf closes; then they are deleted, except for games that are still running.
+- **History:** a game you remove from the shelf is remembered with its play time and dates; add or
+  install it again and they come back. The Archive's *History* tab lists what you installed before.
+- **Icon:** drawn by the program itself (`art/shelf-icon.md` says how; open
+  `art/shelf-icon.html` to try other seeds). `shelf --icon FILE.png 256` writes it out.
+- **Several shelves at once:** the window and `shelf --run` change the library under a lock, so
+  they never undo each other. If you close the window while a game runs, the next shelf keeps
+  counting that run.
+
+It needs `python3` with PyGObject (GTK 3). Everything lives in `~/.local/share/shelf/`.
+`python3 tests/shelf_test.py` tests it without a display.
 
 ### What you need
 
@@ -90,6 +162,7 @@ and all 11 checks outside pass. Some examples:
 | become root with sudo or setuid programs | `no_new_privs`, and all capabilities are dropped |
 | use common kernel exploit tricks | seccomp blocks user namespaces, `io_uring`, `bpf`, `userfaultfd`, `ptrace`, `mount`, kernel modules and odd socket types, also through the 32-bit and x32 entry points |
 | type commands into your terminal | blocked (`TIOCSTI`) |
+| use a file handle that leaked in from outside | gom closes its own handles before starting a sandbox (tested) |
 | crash your PC with a fork bomb | the process limit stops it |
 
 ## What it does NOT protect you from
@@ -107,8 +180,9 @@ real exploit, not ordinary malware:
   gamescope can't show anything in either case. If you want to close this hole too, play on a
   separate TTY with gamescope's DRM backend, without any X server.
 - **Code running inside the sandbox.** A game is native code, and engines like Java or Mono need
-  JIT memory, so gom can't stop a game from running extra code of its own. It can only make sure
-  that code stays inside the sandbox.
+  JIT memory, so gom can't stop a game from running extra code of its own, even programs it
+  drops into `/tmp` (installers rely on that). It can only make sure that code stays inside the
+  sandbox.
 - CPU side-channel attacks (Spectre and friends), or a game that is "evil" in a harmless way,
   for example it ruins its own saves or uses a lot of CPU.
 - `--direct-x` turns off the display sandbox. Only use it for games you trust anyway.
@@ -135,18 +209,27 @@ never reach the screen, while the normal X server and compositor copy every sing
 | `GOM_GAMESCOPE_ARGS` | extra gamescope flags, for example `-F fsr` | none |
 | `GOM_AUDIO_LATENCY_MS` | audio buffer size | 30 |
 | `GOM_NPROC` | max processes and threads for the game | 4096 |
+| `GOM_KEEP_COMPOSITOR` | `1` leaves picom (or another X compositor) running during games | off |
+
+While a game runs, gom stops the X compositor of that display (picom, compton, xcompmgr…) and
+starts it again with the same command line when the last game ends. On X with the modesetting
+driver, which has no TearFree, compositing gamescope's window tore badly; only no compositor at
+all gave clean frames, even compared with picom's own per-window unredirect.
 
 ## Files
 
 ```
 bin/gom                    the main script (bash)
+bin/shelf                  game library window and launcher (python3, GTK 3)
 src/lock.c                 gom-lock: no_new_privs + Landlock + seccomp + limits, then runs the program
 src/denied-syscalls.txt    blocked syscalls (numbers come from your kernel headers)
 src/gen-syscalls.sh        turns the list above into build/syscalls.h
 tests/attack.c             the fake evil game used by --selftest
+tests/shelf_test.py        tests for shelf
+art/                       the shelf icon: its idea, a seed explorer, the rendered PNG
 ```
 
-`make check` runs shellcheck and the self-test.
+`make check` runs shellcheck, the shelf tests and the self-test.
 
 ## Disclaimer
 

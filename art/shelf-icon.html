@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Held Light: shelf icon</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.7.0/p5.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&family=Lora:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        /* Anthropic Brand Colors */
+        :root {
+            --anthropic-dark: #141413;
+            --anthropic-light: #faf9f5;
+            --anthropic-mid-gray: #b0aea5;
+            --anthropic-light-gray: #e8e6dc;
+            --anthropic-orange: #d97757;
+            --anthropic-blue: #6a9bcc;
+            --anthropic-green: #788c5d;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Poppins', sans-serif;
+            background: linear-gradient(135deg, var(--anthropic-light) 0%, #f5f3ee 100%);
+            min-height: 100vh;
+            color: var(--anthropic-dark);
+        }
+
+        .container {
+            display: flex;
+            min-height: 100vh;
+            padding: 20px;
+            gap: 20px;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            width: 320px;
+            flex-shrink: 0;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            padding: 24px;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(20, 20, 19, 0.1);
+            overflow-y: auto;
+            overflow-x: hidden;
+        }
+
+        .sidebar h1 {
+            font-family: 'Lora', serif;
+            font-size: 24px;
+            font-weight: 500;
+            color: var(--anthropic-dark);
+            margin-bottom: 8px;
+        }
+
+        .sidebar .subtitle {
+            color: var(--anthropic-mid-gray);
+            font-size: 14px;
+            margin-bottom: 32px;
+            line-height: 1.4;
+        }
+
+        /* Control Sections */
+        .control-section {
+            margin-bottom: 32px;
+        }
+
+        .control-section h3 {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--anthropic-dark);
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .control-section h3::before {
+            content: '•';
+            color: var(--anthropic-orange);
+            font-weight: bold;
+        }
+
+        /* Seed Controls */
+        .seed-input {
+            width: 100%;
+            background: var(--anthropic-light);
+            padding: 12px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            margin-bottom: 12px;
+            border: 1px solid var(--anthropic-light-gray);
+            text-align: center;
+        }
+
+        .seed-input:focus {
+            outline: none;
+            border-color: var(--anthropic-orange);
+            box-shadow: 0 0 0 2px rgba(217, 119, 87, 0.1);
+            background: white;
+        }
+
+        .seed-controls {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .regen-button {
+            margin-bottom: 0;
+        }
+
+        /* Parameter Controls */
+        .control-group {
+            margin-bottom: 20px;
+        }
+
+        .control-group label {
+            display: block;
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--anthropic-dark);
+            margin-bottom: 8px;
+        }
+
+        .slider-container {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .slider-container input[type="range"] {
+            flex: 1;
+            height: 4px;
+            background: var(--anthropic-light-gray);
+            border-radius: 2px;
+            outline: none;
+            -webkit-appearance: none;
+        }
+
+        .slider-container input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 16px;
+            height: 16px;
+            background: var(--anthropic-orange);
+            border-radius: 50%;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .slider-container input[type="range"]::-webkit-slider-thumb:hover {
+            transform: scale(1.1);
+            background: #c86641;
+        }
+
+        .slider-container input[type="range"]::-moz-range-thumb {
+            width: 16px;
+            height: 16px;
+            background: var(--anthropic-orange);
+            border-radius: 50%;
+            border: none;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .value-display {
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            color: var(--anthropic-mid-gray);
+            min-width: 60px;
+            text-align: right;
+        }
+
+        /* Color Pickers */
+        .color-group {
+            margin-bottom: 16px;
+        }
+
+        .color-group label {
+            display: block;
+            font-size: 12px;
+            color: var(--anthropic-mid-gray);
+            margin-bottom: 4px;
+        }
+
+        .color-picker-container {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .color-picker-container input[type="color"] {
+            width: 32px;
+            height: 32px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            background: none;
+            padding: 0;
+        }
+
+        .color-value {
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            color: var(--anthropic-mid-gray);
+        }
+
+        /* Buttons */
+        .button {
+            background: var(--anthropic-orange);
+            color: white;
+            border: none;
+            padding: 10px 16px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            width: 100%;
+        }
+
+        .button:hover {
+            background: #c86641;
+            transform: translateY(-1px);
+        }
+
+        .button:active {
+            transform: translateY(0);
+        }
+
+        .button.secondary {
+            background: var(--anthropic-blue);
+        }
+
+        .button.secondary:hover {
+            background: #5a8bb8;
+        }
+
+        .button.tertiary {
+            background: var(--anthropic-green);
+        }
+
+        .button.tertiary:hover {
+            background: #6b7b52;
+        }
+
+        .button-row {
+            display: flex;
+            gap: 8px;
+        }
+
+        .button-row .button {
+            flex: 1;
+        }
+
+        /* Canvas Area */
+        .canvas-area {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 0;
+        }
+
+        #canvas-container {
+            width: 100%;
+            max-width: 1000px;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 20px 40px rgba(20, 20, 19, 0.1);
+            background: white;
+        }
+
+        #canvas-container canvas {
+            display: block;
+            width: 100% !important;
+            height: auto !important;
+        }
+
+        /* Loading State */
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            color: var(--anthropic-mid-gray);
+        }
+
+        /* Responsive - Stack on mobile */
+        @media (max-width: 600px) {
+            .container {
+                flex-direction: column;
+            }
+
+            .sidebar {
+                width: 100%;
+            }
+
+            .canvas-area {
+                padding: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="sidebar">
+            <h1>Held Light</h1>
+            <div class="subtitle">The shelf icon. Spines that are also bars; one leans on its neighbour at an angle the algorithm solves.</div>
+
+            <div class="control-section">
+                <h3>Seed</h3>
+                <input type="number" id="seed-input" class="seed-input" value="2611" onchange="updateSeed()">
+                <div class="seed-controls">
+                    <button class="button secondary" onclick="previousSeed()">← Prev</button>
+                    <button class="button secondary" onclick="nextSeed()">Next →</button>
+                </div>
+                <button class="button tertiary regen-button" onclick="randomSeedAndUpdate()">↻ Random</button>
+            </div>
+
+            <div class="control-section">
+                <h3>Parameters</h3>
+                <div class="control-group">
+                    <label>Spines</label>
+                    <div class="slider-container">
+                        <input type="range" id="spines" min="4" max="8" step="1" value="6" oninput="updateParam('spines', this.value)">
+                        <span class="value-display" id="spines-value">6</span>
+                    </div>
+                </div>
+                <div class="control-group">
+                    <label>Height variance</label>
+                    <div class="slider-container">
+                        <input type="range" id="heightVar" min="0.05" max="0.35" step="0.01" value="0.2" oninput="updateParam('heightVar', this.value)">
+                        <span class="value-display" id="heightVar-value">0.2</span>
+                    </div>
+                </div>
+                <div class="control-group">
+                    <label>Skyline waviness</label>
+                    <div class="slider-container">
+                        <input type="range" id="wave" min="0.2" max="1.2" step="0.05" value="0.55" oninput="updateParam('wave', this.value)">
+                        <span class="value-display" id="wave-value">0.55</span>
+                    </div>
+                </div>
+                <div class="control-group">
+                    <label>Lean</label>
+                    <div class="slider-container">
+                        <input type="range" id="lean" min="0" max="1" step="0.05" value="0.5" oninput="updateParam('lean', this.value)">
+                        <span class="value-display" id="lean-value">0.5</span>
+                    </div>
+                </div>
+                <div class="control-group">
+                    <label>Held light</label>
+                    <div class="slider-container">
+                        <input type="range" id="glow" min="0" max="1" step="0.05" value="0.6" oninput="updateParam('glow', this.value)">
+                        <span class="value-display" id="glow-value">0.6</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="control-section">
+                <h3>Actions</h3>
+                <div class="button-row">
+                    <button class="button" onclick="initializeSystem()">Regenerate</button>
+                    <button class="button" onclick="resetParameters()">Reset</button>
+                </div>
+                <div class="button-row" style="margin-top:8px">
+                    <button class="button secondary" onclick="saveCanvas('held-light-' + params.seed, 'png')">Download PNG</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="canvas-area">
+            <div id="canvas-container">
+                <div class="loading">Initializing generative art...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // The same algorithm runs in bin/shelf (shelf_icon) with the same generator, so a seed
+        // chosen here gives the identical icon there.
+        let params = { seed: 2611, spines: 6, heightVar: 0.2, wave: 0.55, lean: 0.5, glow: 0.6 };
+        let defaultParams = {...params};
+
+        function mulberry32(a) {
+            return function () {
+                a |= 0; a = a + 0x6D2B79F5 | 0;
+                let t = Math.imul(a ^ a >>> 15, 1 | a);
+                t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+                return ((t ^ t >>> 14) >>> 0) / 4294967296;
+            };
+        }
+
+        const RAMP = ['#505050', '#686868', '#808080', '#909090'];
+        const LEFT = 0.17, RIGHT = 0.83, BASE = 0.79, GAP = 0.022;
+
+        // Pure geometry in unit coordinates: what the shelf is, independent of how it is drawn.
+        function makeShelf(p) {
+            const rng = mulberry32(p.seed);
+            const lattice = []; for (let i = 0; i < 16; i++) lattice.push(rng());
+            const noise = x => { const i = Math.floor(x), f = x - i, k = (1 - Math.cos(f * Math.PI)) / 2;
+                                 return lattice[i % 16] * (1 - k) + lattice[(i + 1) % 16] * k; };
+            const n = p.spines;
+            const raw = [], cidx = [], grain = [];
+            for (let i = 0; i < n; i++) raw.push(0.7 + 0.6 * rng());
+            for (let i = 0; i < n; i++) cidx.push(Math.floor(rng() * 4));
+            const bright = Math.floor(rng() * (n - 1));
+            for (let i = 0; i < n; i++) grain.push([rng(), rng(), rng()]);
+
+            const dfac = 0.35 + 0.9 * p.lean;
+            const R = raw.reduce((a, b) => a + b, 0);
+            const s = (RIGHT - LEFT - (n - 1) * GAP) / (R + dfac * raw[n - 1]);
+            const spines = [];
+            let x = LEFT;
+            for (let i = 0; i < n - 1; i++) {
+                const w = raw[i] * s, h = 0.36 + p.heightVar * noise(i * p.wave);
+                spines.push({ pts: [[x, BASE], [x + w, BASE], [x + w, BASE - h], [x, BASE - h]], w, h,
+                              color: i === bright ? '#e0e0e0' : RAMP[cidx[i]], grain: grain[i] });
+                x += w + GAP;
+            }
+            // The leaner: foot d to the right of its neighbour, tilted until its face touches the
+            // neighbour's top corner; lengthened if it would fall short of that corner.
+            const nb = spines[n - 2], xn = x - GAP, hn = nb.h;
+            const w = raw[n - 1] * s, d = dfac * w, px = xn + d;
+            const th = Math.atan(d / hn);
+            const h = Math.max(0.36 + p.heightVar * noise((n - 1) * p.wave), hn / Math.cos(th) * 1.04);
+            const u = [-Math.sin(th), -Math.cos(th)], r = [Math.cos(th), -Math.sin(th)];
+            const P = [px, BASE];
+            const pts = [P, [P[0] + r[0] * w, P[1] + r[1] * w],
+                         [P[0] + r[0] * w + u[0] * h, P[1] + r[1] * w + u[1] * h], [P[0] + u[0] * h, P[1] + u[1] * h]];
+            spines.push({ pts, w, h, color: '#a0a0a0', grain: grain[n - 1], th });
+            return spines;
+        }
+
+        function drawIcon(g, S, ox, oy) {
+            const sh = makeShelf(params);
+            const ctx = g.drawingContext;
+            ctx.save(); ctx.translate(ox, oy);
+            ctx.fillStyle = '#000'; ctx.fillRect(0, 0, S, S);
+            const gr = ctx.createRadialGradient(S * 0.5, S * BASE, 0, S * 0.5, S * BASE, S * 0.48);
+            gr.addColorStop(0, `rgba(255,255,255,${0.16 * params.glow})`);
+            gr.addColorStop(1, 'rgba(255,255,255,0)');
+            ctx.fillStyle = gr; ctx.fillRect(0, 0, S, S);
+            for (const sp of sh) {
+                const q = sp.pts.map(([x, y]) => [x * S, y * S]);
+                const poly = () => { ctx.beginPath(); ctx.moveTo(...q[0]); for (const c of q.slice(1)) ctx.lineTo(...c); ctx.closePath(); };
+                poly(); ctx.fillStyle = sp.color; ctx.fill();
+                // label band, and grain only where there are pixels for it
+                ctx.save(); poly(); ctx.clip();
+                const at = (fx, fy) => [q[0][0] + (q[1][0] - q[0][0]) * fx + (q[3][0] - q[0][0]) * fy,
+                                        q[0][1] + (q[1][1] - q[0][1]) * fx + (q[3][1] - q[0][1]) * fy];
+                const band = (f0, f1, a) => { const c = [at(0, f0), at(1, f0), at(1, f1), at(0, f1)];
+                    ctx.beginPath(); ctx.moveTo(...c[0]); for (const k of c.slice(1)) ctx.lineTo(...k); ctx.closePath();
+                    ctx.fillStyle = `rgba(0,0,0,${a})`; ctx.fill(); };
+                band(0.76, 0.84, 0.38);
+                if (S >= 96) {
+                    band(0.08, 0.10, 0.25);
+                    ctx.strokeStyle = 'rgba(255,255,255,0.06)'; ctx.lineWidth = Math.max(1, S / 400);
+                    for (const gx of sp.grain) { ctx.beginPath(); ctx.moveTo(...at(0.15 + 0.7 * gx, 0.02));
+                        ctx.lineTo(...at(0.15 + 0.7 * gx, 0.98)); ctx.stroke(); }
+                }
+                ctx.restore();
+            }
+            ctx.fillStyle = '#c0c0c0';
+            ctx.fillRect(S * (LEFT - 0.03), S * BASE, S * (RIGHT - LEFT + 0.06), Math.max(1, S * 0.035));
+            ctx.restore();
+        }
+
+        function setup() {
+            let canvas = createCanvas(1200, 1200);
+            canvas.parent('canvas-container');
+            pixelDensity(1);
+            noLoop();
+            initializeSystem();
+            document.querySelector('.loading').style.display = 'none';
+        }
+
+        function initializeSystem() { redraw(); }
+
+        function draw() {
+            background(20, 20, 19);
+            drawIcon(window, 960, 120, 24);
+            // the sizes a desktop actually shows, at real pixel size
+            let x = 120;
+            for (const s of [128, 64, 32, 16]) { drawIcon(window, s, x, 1176 - 128 + (128 - s)); x += s + 40; }
+        }
+
+        function updateParam(name, value) {
+            params[name] = name === 'spines' ? parseInt(value) : parseFloat(value);
+            document.getElementById(name + '-value').textContent = value;
+            initializeSystem();
+        }
+
+        function updateSeedDisplay() { document.getElementById('seed-input').value = params.seed; }
+        function updateSeed() {
+            let newSeed = parseInt(document.getElementById('seed-input').value);
+            if (newSeed && newSeed > 0) { params.seed = newSeed; initializeSystem(); } else { updateSeedDisplay(); }
+        }
+        function previousSeed() { params.seed = Math.max(1, params.seed - 1); updateSeedDisplay(); initializeSystem(); }
+        function nextSeed() { params.seed = params.seed + 1; updateSeedDisplay(); initializeSystem(); }
+        function randomSeedAndUpdate() { params.seed = Math.floor(Math.random() * 999999) + 1; updateSeedDisplay(); initializeSystem(); }
+        function resetParameters() {
+            params = {...defaultParams};
+            for (const k of ['spines', 'heightVar', 'wave', 'lean', 'glow']) {
+                document.getElementById(k).value = params[k];
+                document.getElementById(k + '-value').textContent = params[k];
+            }
+            updateSeedDisplay(); initializeSystem();
+        }
+        window.addEventListener('load', updateSeedDisplay);
+    </script>
+</body>
+</html>

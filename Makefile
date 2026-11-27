@@ -19,6 +19,7 @@ build:
 
 check: all
 	shellcheck bin/gom src/gen-syscalls.sh
+	python3 tests/shelf_test.py
 	bin/gom --selftest
 
 clean:
