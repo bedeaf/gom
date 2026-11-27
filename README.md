@@ -56,61 +56,13 @@ gom ~/.local/share/gom/Foo/home/Foo             # play: runs in the same profile
 
 Nothing from the installer ever touches your real home.
 
-### shelf: a game library
+### shelf: a window instead of a terminal
 
-I'm lazy and I didn't want to use my tool gom in a terminal just to play games, lol. So I made this.
+[shelf](https://github.com/bedeaf/shelf) is a game library for gom: cover art, play time, an
+archive.org browser that installs games without running anything, and one-click start into
+gom's sandbox. I'm lazy and didn't want a terminal just to play games, so I made it.
 
-![shelf: the library](art/shelf-library.png)
-
-![shelf: the archive view (game names and covers blurred)](art/shelf-archive.png)
-
-`bin/shelf` is a small GTK window for your games. It keeps them with their cover art, starts
-them through gom (so every launch still goes into the sandbox) and counts how long you play.
-
-```sh
-ln -s "$PWD/bin/shelf" ~/.local/bin/shelf
-shelf                                           # the window
-shelf --run "$(shelf --list | dmenu -i -p play)"   # or from dmenu; play time is counted too
-```
-
-- **Import:** point it at a folder such as `~/Games` and every subfolder gom can start becomes a
-  game. An installed game wins over the installer lying next to it. Loose installers are left
-  out, because a game sees every file next to it: give each one its own folder.
-- **Archive:** the *Archive* view lists the games of the archive.org collection this project was
-  made for. Pictures come straight from archive.org into memory and are never written to disk.
-  *Install* downloads the game (checked against archive.org's md5, resumed after a dropped
-  connection) and unpacks it into `~/Games/<title>` without running anything from it: GOG
-  installers are unzipped, LinuxRuleZ! installers have their embedded `tar.zst` read out, and
-  `.tar`, `.zip` and `.7z` archives are unpacked with checks against paths and links that point
-  outside. An installer shelf can't read is kept as is and runs in the sandbox on the first
-  start. Removing such a game from the shelf can delete its folder too.
-- **Covers:** looked up once per game on the Steam store, then Wikipedia. Only the title is
-  sent. *Choose a cover* shows every hit to pick from; you can also drop an image (or a picture
-  dragged out of the browser) on a game. Downloads must be JPEG, PNG or WebP, are checked for
-  size before they are decoded, and are re-encoded before they are kept. Turn lookups off in the
-  menu or with `SHELF_OFFLINE=1`.
-- **Several programs in one folder:** shelf asks once which one starts the game. The others
-  (DUSK and DUSKWORLD, for example) are under *Start another program* in the game's menu.
-- **Installers:** after an installer ran in a profile, shelf offers to start the installed game
-  from then on.
-- **Play time, favorites, hidden games, tags and notes**, tabs for recent and unplayed games,
-  sorting by name, last played, play time or date added, a details panel, logs, a shell in the
-  game's sandbox, and per-game options (windowed, resolution, mouse lock, sound, arguments,
-  environment, gamescope flags). Press F1 in the window for the keyboard shortcuts.
-- **Missing libraries:** before a game's first start shelf reads its programs' ELF headers (it
-  runs nothing) and names the libraries your system lacks, with the install command for your
-  distribution (Void, Debian/Ubuntu, Arch, Fedora, openSUSE, Gentoo), 32-bit packages included.
-- **Logs** last until shelf closes; then they are deleted, except for games that are still running.
-- **History:** a game you remove from the shelf is remembered with its play time and dates; add or
-  install it again and they come back. The Archive's *History* tab lists what you installed before.
-- **Icon:** drawn by the program itself (`art/shelf-icon.md` says how; open
-  `art/shelf-icon.html` to try other seeds). `shelf --icon FILE.png 256` writes it out.
-- **Several shelves at once:** the window and `shelf --run` change the library under a lock, so
-  they never undo each other. If you close the window while a game runs, the next shelf keeps
-  counting that run.
-
-It needs `python3` with PyGObject (GTK 3). Everything lives in `~/.local/share/shelf/`.
-`python3 tests/shelf_test.py` tests it without a display.
+![shelf](https://raw.githubusercontent.com/bedeaf/shelf/main/art/shelf-library.png)
 
 ### What you need
 
@@ -220,16 +172,13 @@ all gave clean frames, even compared with picom's own per-window unredirect.
 
 ```
 bin/gom                    the main script (bash)
-bin/shelf                  game library window and launcher (python3, GTK 3)
 src/lock.c                 gom-lock: no_new_privs + Landlock + seccomp + limits, then runs the program
 src/denied-syscalls.txt    blocked syscalls (numbers come from your kernel headers)
 src/gen-syscalls.sh        turns the list above into build/syscalls.h
 tests/attack.c             the fake evil game used by --selftest
-tests/shelf_test.py        tests for shelf
-art/                       the shelf icon: its idea, a seed explorer, the rendered PNG
 ```
 
-`make check` runs shellcheck, the shelf tests and the self-test.
+`make check` runs shellcheck and the self-test.
 
 ## Disclaimer
 
